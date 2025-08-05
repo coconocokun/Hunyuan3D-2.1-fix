@@ -14,6 +14,7 @@
 
 import os
 import torch
+import torch.nn as nn
 import copy
 import trimesh
 import numpy as np
@@ -85,9 +86,17 @@ class Hunyuan3DPaintPipeline:
 
     def load_models(self):
         torch.cuda.empty_cache()
-        self.models["super_model"] = imageSuperNet(self.config)
-        self.models["multiview_model"] = multiviewDiffusionNet(self.config)
-        print("Models Loaded.")
+        # self.models["super_model"] = imageSuperNet(self.config)
+        # self.models["multiview_model"] = multiviewDiffusionNet(self.config)
+        # print("Models Loaded.")
+        if torch.cuda.device_count() > 1:
+            print(f"Using {torch.cuda.device_count()} GPUs for model parallelism.")
+            self.models["super_model"] = nn.DataParallel(imageSuperNet(self.config))
+            self.models["multiview_model"] = nn.DataParallel(multiviewDiffusionNet(self.config))
+        else:
+            print("Using single GPU for model.")
+            self.models["super_model"] = imageSuperNet(self.config)
+            self.models["multiview_model"] = multiviewDiffusionNet(self.config)
 
     @torch.no_grad()
     def __call__(self, mesh_path=None, image_path=None, output_mesh_path=None, use_remesh=True, save_glb=True):
