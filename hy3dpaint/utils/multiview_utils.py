@@ -22,10 +22,12 @@ import huggingface_hub
 from omegaconf import OmegaConf
 from diffusers import DiffusionPipeline
 from diffusers import EulerAncestralDiscreteScheduler, DDIMScheduler, UniPCMultistepScheduler
+import torch.nn as nn
 
 
-class multiviewDiffusionNet:
+class multiviewDiffusionNet(nn.Module):
     def __init__(self, config) -> None:
+        super().__init__()
         self.device = config.device
 
         cfg_path = config.multiview_cfg_path
@@ -62,13 +64,14 @@ class multiviewDiffusionNet:
         np.random.seed(seed)
         torch.manual_seed(seed)
         os.environ["PL_GLOBAL_SEED"] = str(seed)
-
+    
     @torch.no_grad()
-    def __call__(self, images, conditions, prompt=None, custom_view_size=None, resize_input=False):
+    def forward(self, images, conditions, prompt=None, custom_view_size=None, resize_input=False):
         pils = self.forward_one(
             images, conditions, prompt=prompt, custom_view_size=custom_view_size, resize_input=resize_input
         )
         return pils
+    
 
     def forward_one(self, input_images, control_images, prompt=None, custom_view_size=None, resize_input=False):
         self.seed_everything(0)
