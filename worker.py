@@ -1,4 +1,7 @@
 # worker.py
+import sys
+sys.path.insert(0, './hy3dpaint')
+sys.path.insert(0, './hy3dpaint')
 
 import torch
 import time
