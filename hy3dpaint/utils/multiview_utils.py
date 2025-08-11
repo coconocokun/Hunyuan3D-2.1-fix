@@ -27,7 +27,7 @@ from accelerate.utils import load_checkpoint_in_model
 
 
 class multiviewDiffusionNet(nn.Module):
-    def __init__(self, config, accelerator) -> None:
+    def __init__(self, config, accelerator, dino_v2_model) -> None:
         super().__init__()
         
         if accelerator.is_main_process:
@@ -64,34 +64,7 @@ class multiviewDiffusionNet(nn.Module):
         )
 
         if hasattr(self.pipeline.unet, "use_dino") and self.pipeline.unet.use_dino:
-            # Determine the target device for DINO.
-            # Usually, the same device as the start of the UNet.
-            if hasattr(self.pipeline, "device"):
-                dino_device = self.pipeline.device
-            else:
-                dino_device = self.pipeline.unet.device
-
-            from hunyuanpaintpbr.unet.modules import Dino_v2
-            
-            # 1. Create the DINO model shell on the 'meta' device.
-            #    This happens automatically because we are in the `init_empty_weights` context.
-            self.dino_v2 = Dino_v2(config.dino_ckpt_path)
-
-            # 2. Move the empty shell to the target GPU.
-            #    The error message tells us exactly which function to use!
-            self.dino_v2.to_empty(device=dino_device)
-            
-            # 3. Load the checkpoint weights directly into the model on the target GPU.
-            #    DINO models are standard Hugging Face models, so we can pass the repo ID.
-            print(f"Loading DINO checkpoint '{config.dino_ckpt_path}' onto {dino_device}...")
-            load_checkpoint_in_model(
-                self.dino_v2,
-                checkpoint=config.dino_ckpt_path,
-                device=dino_device, # Explicitly tell it where to load
-            )
-            
-            # 4. Set the dtype after loading.
-            self.dino_v2.to(dtype=torch.float16)
+            self.dino_v2 = dino_v2_model
 
         self.no_split_modules = ["CLIPTextModel", "CLIPVisionModel", "HunyuanDiTTexEncoder", "LlamaForCausalLM"]
 

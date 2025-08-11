@@ -71,11 +71,12 @@ class Hunyuan3DPaintConfig:
 
 
 class Hunyuan3DPaintPipeline:
-    def __init__(self, config=None, accelerator=None) -> None:
+    def __init__(self, config=None, accelerator=None, dino_v2_model=None) -> None:
         self.config = config if config is not None else Hunyuan3DPaintConfig()
         self.accelerator = accelerator
         self.models = {}
         self.stats_logs = {}
+        self.dino_v2_model = dino_v2_model
         self.render = MeshRender(
             default_resolution=self.config.render_size,
             texture_size=self.config.texture_size,
@@ -88,7 +89,7 @@ class Hunyuan3DPaintPipeline:
     def load_models(self):
         torch.cuda.empty_cache()
         print("Instantiating sharded multiview_model...")
-        self.models["multiview_model"] = multiviewDiffusionNet(self.config, self.accelerator)
+        self.models["multiview_model"] = multiviewDiffusionNet(self.config, self.accelerator, self.dino_v2_model)
 
         # --- super_model (RealESRGAN) ---
         # --- START OF NEW LOGIC ---

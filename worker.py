@@ -10,6 +10,7 @@ import json
 from accelerate import Accelerator, init_empty_weights
 from accelerate.utils import infer_auto_device_map, get_balanced_memory
 from hy3dpaint.textureGenPipeline import Hunyuan3DPaintPipeline, Hunyuan3DPaintConfig
+from hunyuanpaintpbr.unet.modules import Dino_v2
 from PIL import Image
 import traceback
 
@@ -32,9 +33,15 @@ def main():
     conf.multiview_cfg_path = "hy3dpaint/cfgs/hunyuan-paint-pbr.yaml"
     conf.custom_pipeline = "hy3dpaint/hunyuanpaintpbr"
     
-    # Load the pipeline using the accelerator for model sharding
+    dino_v2_model = None
     if accelerator.is_main_process:
-        print("Main process is loading the pipeline...")
+        dino_device = f'cuda:{accelerator.local_process_index}' if torch.cuda.is_available() else 'cpu'
+        dino_v2_model = Dino_v2(conf.dino_ckpt_path)
+        dino_v2_model.to(device=dino_device, dtype=torch.float16)
+        dino_v2_model.eval()
+        print("DINO v2 model loaded")
+    
+    accelerator.wait_for_everyone()  # Ensure all processes are synchronized
     
     # We must use init_empty_weights to handle models larger than system RAM
     with init_empty_weights():
