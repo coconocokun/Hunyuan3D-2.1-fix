@@ -23,7 +23,7 @@ from omegaconf import OmegaConf
 from diffusers import DiffusionPipeline
 from diffusers import EulerAncestralDiscreteScheduler, DDIMScheduler, UniPCMultistepScheduler
 import torch.nn as nn
-from accelerate.utils import load_checkpoint_in_model
+from accelerate.utils import get_balanced_memory, infer_auto_device_map
 
 
 class multiviewDiffusionNet(nn.Module):
@@ -45,23 +45,62 @@ class multiviewDiffusionNet(nn.Module):
             )
         print(f"Repo downloaded to: {local_repo_path}")
 
-        # 2. Construct the absolute local path to the pipeline subfolder.
-        #    This is the folder that actually contains the model_index.json.
+        # 1. Download the repo first
         pipeline_local_path = os.path.join(local_repo_path, "hunyuan3d-paintpbr-v2-1")
-
-        # 3. Construct the absolute local path to the custom pipeline code.
         current_dir = os.path.dirname(os.path.abspath(__file__))
         custom_pipeline_path = os.path.join(current_dir, "..", "hunyuanpaintpbr")
+        
+        # 2. Determine which GPUs are available for sharding.
+        #    We need to exclude the GPU that DINO is on.
+        dino_device = dino_v2_model.device if dino_v2_model is not None else None
+        
+        # Get a list of all available GPU memory
+        # Note: This must run on all processes to get an accurate view
+        max_memory = get_balanced_memory(
+            None, # Pass no model, we're just getting raw memory
+            max_memory=None,
+            no_split_module_classes=[],
+            dtype=torch.float16,
+        )
 
-        # 4. Load the pipeline from the LOCAL path.
-        #    We no longer need the 'subfolder' argument.
-        print(f"Loading and sharding multiview pipeline from local path: {pipeline_local_path}")
+        # If DINO is on a GPU, set the memory for that GPU to 0
+        # so the balanced strategy will not assign any layers to it.
+        if dino_device is not None and dino_device.type == 'cuda':
+             dino_gpu_id = dino_device.index
+             if dino_gpu_id in max_memory:
+                 print(f"Process {accelerator.process_index}: Excluding GPU {dino_gpu_id} from device map for multiview_model.")
+                 max_memory[dino_gpu_id] = 0
+
+        # 3. Create an empty shell of the pipeline on the 'meta' device
+        #    so we can infer the device map without loading weights.
+        with torch.device('meta'):
+             temp_pipeline = DiffusionPipeline.from_pretrained(
+                 pipeline_local_path,
+                 custom_pipeline=custom_pipeline_path,
+                 torch_dtype=torch.float16,
+                 low_cpu_mem_usage=True,
+             )
+
+        # 4. Infer the device map using our modified memory constraints.
+        device_map = infer_auto_device_map(
+             temp_pipeline,
+             max_memory=max_memory,
+             no_split_module_classes=["CLIPTextModel", "CLIPVisionModel"],
+             dtype=torch.float16
+        )
+        del temp_pipeline # Free the meta object
+
+        print(f"Process {accelerator.process_index}: Inferred device map: {device_map}")
+
+        # 5. Load the pipeline from the local path using our custom device map.
+        print(f"Loading and sharding multiview pipeline with custom device map...")
         self.pipeline = DiffusionPipeline.from_pretrained(
-            pipeline_local_path, # <-- Use the constructed local path
+            pipeline_local_path,
             custom_pipeline=custom_pipeline_path,
             torch_dtype=torch.float16,
-            device_map="balanced",
+            device_map=device_map, # <-- Use our custom map
         )
+
 
         if hasattr(self.pipeline.unet, "use_dino") and self.pipeline.unet.use_dino:
             self.dino_v2 = dino_v2_model

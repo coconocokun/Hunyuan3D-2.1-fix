@@ -13,6 +13,8 @@ from hy3dpaint.textureGenPipeline import Hunyuan3DPaintPipeline, Hunyuan3DPaintC
 from hunyuanpaintpbr.unet.modules import Dino_v2
 from PIL import Image
 import traceback
+from hy3dpaint.utils.image_super_utils import imageSuperNet
+
 
 # --- Configuration ---
 # Folders for communication between Gradio and the worker
@@ -33,19 +35,40 @@ def main():
     conf.multiview_cfg_path = "hy3dpaint/cfgs/hunyuan-paint-pbr.yaml"
     conf.custom_pipeline = "hy3dpaint/hunyuanpaintpbr"
     
+    # Only the main process will load these single-GPU models
     dino_v2_model = None
-    if accelerator.is_main_process:
-        dino_device = f'cuda:{accelerator.local_process_index}' if torch.cuda.is_available() else 'cpu'
-        dino_v2_model = Dino_v2(conf.dino_ckpt_path)
-        dino_v2_model.to(device=dino_device, dtype=torch.float16)
-        dino_v2_model.eval()
-        print("DINO v2 model loaded")
+    super_model = None
     
-    accelerator.wait_for_everyone()  # Ensure all processes are synchronized
+    if accelerator.is_main_process:
+        num_gpus = torch.cuda.device_count()
+        
+        # Assign DINO to the first GPU
+        dino_device = f'cuda:0'
+        print(f"Main process pre-loading DINO model onto {dino_device}...")
+        dino_v2_model = Dino_v2(conf.dino_ckpt_path)
+        dino_v2_model.to(device=dino_device, dtype=torch.float16).eval()
+        print("DINO model pre-loaded.")
+        
+        # Assign RealESRGAN to the LAST GPU, keeping it separate
+        if num_gpus > 1:
+            super_model_device = f'cuda:{num_gpus - 1}'
+        else:
+            super_model_device = 'cuda:0' # Fallback for single GPU
+
+        print(f"Main process loading super_model onto {super_model_device}...")
+        super_model = imageSuperNet(conf, device=super_model_device)
+        print("super_model loaded.")
+
+    # All processes must wait here!
+    accelerator.wait_for_everyone()
     
     # We must use init_empty_weights to handle models larger than system RAM
-    with init_empty_weights():
-        tex_pipeline = Hunyuan3DPaintPipeline(conf, accelerator=accelerator)
+    tex_pipeline = Hunyuan3DPaintPipeline(
+        conf, 
+        accelerator=accelerator, 
+        dino_v2_model=dino_v2_model, 
+        super_model=super_model
+    )
 
     # The main process will print the device map
     if accelerator.is_main_process:

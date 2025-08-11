@@ -71,12 +71,13 @@ class Hunyuan3DPaintConfig:
 
 
 class Hunyuan3DPaintPipeline:
-    def __init__(self, config=None, accelerator=None, dino_v2_model=None) -> None:
+    def __init__(self, config=None, accelerator=None, dino_v2_model=None, super_model=None) -> None:
         self.config = config if config is not None else Hunyuan3DPaintConfig()
         self.accelerator = accelerator
         self.models = {}
         self.stats_logs = {}
         self.dino_v2_model = dino_v2_model
+        self.super_model_instance = super_model
         self.render = MeshRender(
             default_resolution=self.config.render_size,
             texture_size=self.config.texture_size,
@@ -89,7 +90,11 @@ class Hunyuan3DPaintPipeline:
     def load_models(self):
         torch.cuda.empty_cache()
         print("Instantiating sharded multiview_model...")
-        self.models["multiview_model"] = multiviewDiffusionNet(self.config, self.accelerator, self.dino_v2_model)
+        self.models["multiview_model"] = multiviewDiffusionNet(
+            self.config, 
+            self.accelerator, 
+            self.dino_v2_model
+        )
 
         # --- super_model (RealESRGAN) ---
         # --- START OF NEW LOGIC ---
@@ -97,14 +102,8 @@ class Hunyuan3DPaintPipeline:
         # This logic only needs to run on the main process.
         if self.accelerator.is_main_process:
             # A good strategy is to use the last available GPU to keep it separate.
-            num_gpus = self.accelerator.num_processes
-            super_model_device = f'cuda:{num_gpus - 1}'
-            
-            print(f"Loading super_model onto dedicated device: {super_model_device}")
-            # Instantiate it, telling it which GPU to use.
-            # The imageSuperNet __init__ will handle loading the model to that device.
-            self.models["super_model"] = imageSuperNet(self.config, device=super_model_device)
-            print("super_model loaded.")
+            self.models["super_model"] = self.super_model_instance
+            print("super_model attached.")
         
         # All processes wait here to ensure the main process has loaded the super_model
         # before any process might try to access it (even though only main process will).
