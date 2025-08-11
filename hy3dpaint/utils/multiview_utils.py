@@ -26,26 +26,40 @@ import torch.nn as nn
 
 
 class multiviewDiffusionNet(nn.Module):
-    def __init__(self, config) -> None:
+    def __init__(self, config, accelerator) -> None:
         super().__init__()
         
-        # 1. Make the custom pipeline path absolute (this is still good practice)
+        if accelerator.is_main_process:
+            print(f"Main process downloading repo '{config.multiview_pretrained_path}'...")
+            local_repo_path = huggingface_hub.snapshot_download(
+                repo_id=config.multiview_pretrained_path
+            )
+        
+        accelerator.wait_for_everyone() # All processes wait here
+
+        if not accelerator.is_main_process:
+            # Other processes now load from the cache, which is very fast.
+            local_repo_path = huggingface_hub.snapshot_download(
+                repo_id=config.multiview_pretrained_path
+            )
+        print(f"Repo downloaded to: {local_repo_path}")
+
+        # 2. Construct the absolute local path to the pipeline subfolder.
+        #    This is the folder that actually contains the model_index.json.
+        pipeline_local_path = os.path.join(local_repo_path, "hunyuan3d-paintpbr-v2-1")
+
+        # 3. Construct the absolute local path to the custom pipeline code.
         current_dir = os.path.dirname(os.path.abspath(__file__))
         custom_pipeline_path = os.path.join(current_dir, "..", "hunyuanpaintpbr")
 
-        # 2. Let diffusers handle everything with device_map="auto"
-        # This will automatically:
-        # - Download the model if needed (with synchronization)
-        # - Instantiate the pipeline with empty weights
-        # - Infer the device map
-        # - Load the weights directly onto the target devices
-        print("Loading and sharding multiview pipeline with device_map='auto'...")
+        # 4. Load the pipeline from the LOCAL path.
+        #    We no longer need the 'subfolder' argument.
+        print(f"Loading and sharding multiview pipeline from local path: {pipeline_local_path}")
         self.pipeline = DiffusionPipeline.from_pretrained(
-            config.multiview_pretrained_path,
-            subfolder="hunyuan3d-paintpbr-v2-1", # Use subfolder for a cleaner repo ID
+            pipeline_local_path, # <-- Use the constructed local path
             custom_pipeline=custom_pipeline_path,
             torch_dtype=torch.float16,
-            device_map="balanced"
+            device_map="balanced",
         )
 
         # The pipeline is now a sharded model.

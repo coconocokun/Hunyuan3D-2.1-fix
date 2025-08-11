@@ -88,7 +88,7 @@ class Hunyuan3DPaintPipeline:
     def load_models(self):
         torch.cuda.empty_cache()
         print("Instantiating sharded multiview_model...")
-        self.models["multiview_model"] = multiviewDiffusionNet(self.config)
+        self.models["multiview_model"] = multiviewDiffusionNet(self.config, self.accelerator)
 
         # --- super_model (RealESRGAN) ---
         # --- START OF NEW LOGIC ---
