@@ -45,7 +45,7 @@ class multiviewDiffusionNet(nn.Module):
             subfolder="hunyuan3d-paintpbr-v2-1", # Use subfolder for a cleaner repo ID
             custom_pipeline=custom_pipeline_path,
             torch_dtype=torch.float16,
-            device_map="auto" # <-- The magic argument!
+            device_map="balanced"
         )
 
         # The pipeline is now a sharded model.
