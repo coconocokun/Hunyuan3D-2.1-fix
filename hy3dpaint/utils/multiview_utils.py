@@ -65,7 +65,7 @@ class multiviewDiffusionNet(nn.Module):
         # 2. Get the available memory for each GPU.
         #    We pass the `temp_pipeline` object to be measured.
         max_memory = get_balanced_memory(
-            temp_pipeline, # <-- Pass the meta-device model shell here
+            temp_pipeline.unet, # <-- Pass the meta-device model shell here
             max_memory=None,
             no_split_module_classes=["CLIPTextModel", "CLIPVisionModel"],
             dtype=torch.float16,
@@ -81,7 +81,7 @@ class multiviewDiffusionNet(nn.Module):
 
         # 4. Infer the device map using the model shell and our modified memory constraints.
         device_map = infer_auto_device_map(
-             temp_pipeline, # <-- Use the same shell here
+             temp_pipeline.unet, # <-- Use the same shell here
              max_memory=max_memory,
              no_split_module_classes=["CLIPTextModel", "CLIPVisionModel"],
              dtype=torch.float16
