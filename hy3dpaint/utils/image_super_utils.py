@@ -34,6 +34,7 @@ class imageSuperNet(nn.Module):
             gpu_id=None,
         )
         self.upsampler = upsampler
+        self.checkpoint_path = config.realesrgan_ckpt_path
         self.no_split_modules = ["RRDBNet"]
 
     def forward(self, image):

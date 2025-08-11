@@ -26,7 +26,7 @@ from utils.pipeline_utils import ViewProcessor
 from utils.image_super_utils import imageSuperNet
 from utils.uvwrap_utils import mesh_uv_wrap
 from DifferentiableRenderer.mesh_utils import convert_obj_to_glb
-from accelerate import dispatch_model
+from accelerate import load_checkpoint_and_dispatch
 from accelerate.utils import infer_auto_device_map
 import warnings
 
@@ -90,13 +90,23 @@ class Hunyuan3DPaintPipeline:
         multiview_model = multiviewDiffusionNet(self.config, self.accelerator)
         device_map = infer_auto_device_map(multiview_model, no_split_module_classes=multiview_model.no_split_modules,
                                            dtype=torch.float16)
-        self.models["multiview_model"] = dispatch_model(multiview_model, device_map=device_map)
+        self.models["multiview_model"] = load_checkpoint_and_dispatch(
+            multiview_model, 
+            checkpoint=multiview_model.checkpoint_path,
+            no_split_module_classes=multiview_model.no_split_modules,
+            dtype=torch.float16
+        )
         
         super_model = imageSuperNet(self.config)
         device_map = infer_auto_device_map(super_model, no_split_module_classes=super_model.no_split_modules,
                                          dtype=torch.float16)
-        self.models["super_model"] = dispatch_model(super_model, device_map=device_map)
-        
+        self.models["super_model"] = load_checkpoint_and_dispatch(
+            super_model,
+            checkpoint=super_model.checkpoint_path,
+            no_split_module_classes=super_model.no_split_modules,
+            dtype=torch.float16,
+            force_hooks=True
+        )
 
     @torch.no_grad()
     def __call__(self, mesh_path=None, image_path=None, output_mesh_path=None, use_remesh=True, save_glb=True):

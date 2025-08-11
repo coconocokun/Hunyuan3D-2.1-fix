@@ -61,13 +61,15 @@ class multiviewDiffusionNet(nn.Module):
                 allow_patterns=["hunyuan3d-paintpbr-v2-1/*"],
             )
 
-        model_path = os.path.join(model_path, "hunyuan3d-paintpbr-v2-1")
+        # model_path = os.path.join(model_path, "hunyuan3d-paintpbr-v2-1")
+        self.checkpoint_path = os.path.join(model_path, "hunyuan3d-paintpbr-v2-1")
         
         # Now, from_pretrained will work correctly on all processes.
         pipeline = DiffusionPipeline.from_pretrained(
-            model_path,
+            self.checkpoint_path,
             custom_pipeline=custom_pipeline_path, # Use the absolute path
-            torch_dtype=torch.float16
+            torch_dtype=torch.float16,
+            low_cpu_mem_usage=True,
         )
         
         pipeline.scheduler = UniPCMultistepScheduler.from_config(pipeline.scheduler.config, timestep_spacing="trailing")
