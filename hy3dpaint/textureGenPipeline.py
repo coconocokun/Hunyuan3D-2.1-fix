@@ -94,6 +94,7 @@ class Hunyuan3DPaintPipeline:
             multiview_model, 
             checkpoint=multiview_model.checkpoint_path,
             no_split_module_classes=multiview_model.no_split_modules,
+            device_map=device_map,
             dtype=torch.float16
         )
         
@@ -105,6 +106,7 @@ class Hunyuan3DPaintPipeline:
             checkpoint=super_model.checkpoint_path,
             no_split_module_classes=super_model.no_split_modules,
             dtype=torch.float16,
+            device_map=device_map,
             force_hooks=True
         )
 
