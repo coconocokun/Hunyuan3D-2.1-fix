@@ -26,40 +26,65 @@ import torch.nn as nn
 
 
 class multiviewDiffusionNet(nn.Module):
-    def __init__(self, config) -> None:
+    def __init__(self, config, accelerator) -> None:
         super().__init__()
-        self.device = config.device
 
+        self.device = config.device
         cfg_path = config.multiview_cfg_path
-        custom_pipeline = os.path.join(os.path.dirname(__file__),"..","hunyuanpaintpbr")
+        
+        # 1. MAKE THE CUSTOM PIPELINE PATH ABSOLUTE
+        # This resolves any ambiguity about the current working directory.
+        current_dir = os.path.dirname(os.path.abspath(__file__))
+        custom_pipeline_path = os.path.join(current_dir, "..", "hunyuanpaintpbr")
+
         cfg = OmegaConf.load(cfg_path)
         self.cfg = cfg
         self.mode = self.cfg.model.params.stable_diffusion_config.custom_pipeline[2:]
 
-        model_path = huggingface_hub.snapshot_download(
-            repo_id=config.multiview_pretrained_path,
-            allow_patterns=["hunyuan3d-paintpbr-v2-1/*"],
-        )
+        # 2. SYNCHRONIZE MODEL DOWNLOAD
+        # Only the main process should download the model from the Hub.
+        # Other processes will wait and then load from the local cache.
+        if accelerator.is_main_process:
+            print("Main process downloading model snapshot...")
+            model_path = huggingface_hub.snapshot_download(
+                repo_id=config.multiview_pretrained_path,
+                allow_patterns=["hunyuan3d-paintpbr-v2-1/*"],
+            )
+        
+        # All processes wait here until the main process is done downloading.
+        accelerator.wait_for_everyone()
+
+        # Non-main processes can now safely load from the cache.
+        if not accelerator.is_main_process:
+            model_path = huggingface_hub.snapshot_download(
+                repo_id=config.multiview_pretrained_path,
+                allow_patterns=["hunyuan3d-paintpbr-v2-1/*"],
+            )
 
         model_path = os.path.join(model_path, "hunyuan3d-paintpbr-v2-1")
+        
+        # Now, from_pretrained will work correctly on all processes.
         pipeline = DiffusionPipeline.from_pretrained(
             model_path,
-            custom_pipeline=custom_pipeline, 
+            custom_pipeline=custom_pipeline_path, # Use the absolute path
             torch_dtype=torch.float16
         )
-
+        
         pipeline.scheduler = UniPCMultistepScheduler.from_config(pipeline.scheduler.config, timestep_spacing="trailing")
         pipeline.set_progress_bar_config(disable=True)
         pipeline.eval()
         setattr(pipeline, "view_size", cfg.model.params.get("view_size", 320))
-        self.pipeline = pipeline.to(self.device)
+        
+        # Note: self.pipeline is not moved to a device here.
+        # Accelerate's dispatch_model will handle placing its components.
+        self.pipeline = pipeline
 
         if hasattr(self.pipeline.unet, "use_dino") and self.pipeline.unet.use_dino:
             from hunyuanpaintpbr.unet.modules import Dino_v2
             self.dino_v2 = Dino_v2(config.dino_ckpt_path).to(torch.float16)
-            self.dino_v2 = self.dino_v2.to(self.device)
-        
-        self.no_split_modules = ["CLIPTextModel", "CLIPVisionModel", "HunyuanDiTTexEncoder", "LlamaCasualLM"]
+            # The dino_v2 model will also be placed by dispatch_model
+
+        self.no_split_modules = ["CLIPTextModel", "CLIPVisionModel", "HunyuanDiTTexEncoder", "LlamaForCausalLM"]
 
     def seed_everything(self, seed):
         random.seed(seed)
