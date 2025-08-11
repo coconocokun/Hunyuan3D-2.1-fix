@@ -26,65 +26,41 @@ import torch.nn as nn
 
 
 class multiviewDiffusionNet(nn.Module):
-    def __init__(self, config, accelerator) -> None:
+    def __init__(self, config) -> None:
         super().__init__()
-
-        self.device = config.device
-        cfg_path = config.multiview_cfg_path
         
-        # 1. MAKE THE CUSTOM PIPELINE PATH ABSOLUTE
-        # This resolves any ambiguity about the current working directory.
+        # 1. Make the custom pipeline path absolute (this is still good practice)
         current_dir = os.path.dirname(os.path.abspath(__file__))
         custom_pipeline_path = os.path.join(current_dir, "..", "hunyuanpaintpbr")
 
-        cfg = OmegaConf.load(cfg_path)
-        self.cfg = cfg
-        self.mode = self.cfg.model.params.stable_diffusion_config.custom_pipeline[2:]
-
-        # 2. SYNCHRONIZE MODEL DOWNLOAD
-        # Only the main process should download the model from the Hub.
-        # Other processes will wait and then load from the local cache.
-        if accelerator.is_main_process:
-            print("Main process downloading model snapshot...")
-            model_path = huggingface_hub.snapshot_download(
-                repo_id=config.multiview_pretrained_path,
-                allow_patterns=["hunyuan3d-paintpbr-v2-1/*"],
-            )
-        
-        # All processes wait here until the main process is done downloading.
-        accelerator.wait_for_everyone()
-
-        # Non-main processes can now safely load from the cache.
-        if not accelerator.is_main_process:
-            model_path = huggingface_hub.snapshot_download(
-                repo_id=config.multiview_pretrained_path,
-                allow_patterns=["hunyuan3d-paintpbr-v2-1/*"],
-            )
-
-        # model_path = os.path.join(model_path, "hunyuan3d-paintpbr-v2-1")
-        self.checkpoint_path = os.path.join(model_path, "hunyuan3d-paintpbr-v2-1")
-        
-        # Now, from_pretrained will work correctly on all processes.
-        pipeline = DiffusionPipeline.from_pretrained(
-            self.checkpoint_path,
-            custom_pipeline=custom_pipeline_path, # Use the absolute path
+        # 2. Let diffusers handle everything with device_map="auto"
+        # This will automatically:
+        # - Download the model if needed (with synchronization)
+        # - Instantiate the pipeline with empty weights
+        # - Infer the device map
+        # - Load the weights directly onto the target devices
+        print("Loading and sharding multiview pipeline with device_map='auto'...")
+        self.pipeline = DiffusionPipeline.from_pretrained(
+            config.multiview_pretrained_path,
+            subfolder="hunyuan3d-paintpbr-v2-1", # Use subfolder for a cleaner repo ID
+            custom_pipeline=custom_pipeline_path,
             torch_dtype=torch.float16,
-            low_cpu_mem_usage=True,
+            device_map="auto" # <-- The magic argument!
         )
-        
-        pipeline.scheduler = UniPCMultistepScheduler.from_config(pipeline.scheduler.config, timestep_spacing="trailing")
-        pipeline.set_progress_bar_config(disable=True)
-        pipeline.eval()
-        setattr(pipeline, "view_size", cfg.model.params.get("view_size", 320))
-        
-        # Note: self.pipeline is not moved to a device here.
-        # Accelerate's dispatch_model will handle placing its components.
-        self.pipeline = pipeline
+
+        # The pipeline is now a sharded model.
+        # We need to place the dino_v2 model on one of the GPUs,
+        # typically the one where the first part of the UNet is.
+        if hasattr(self.pipeline, "device"):
+             dino_device = self.pipeline.device
+        else:
+             # Fallback if the main pipeline is on 'meta'
+             dino_device = self.pipeline.unet.device
 
         if hasattr(self.pipeline.unet, "use_dino") and self.pipeline.unet.use_dino:
             from hunyuanpaintpbr.unet.modules import Dino_v2
-            self.dino_v2 = Dino_v2(config.dino_ckpt_path).to(torch.float16)
-            # The dino_v2 model will also be placed by dispatch_model
+            # Load Dino_v2 and move it to the correct device
+            self.dino_v2 = Dino_v2(config.dino_ckpt_path).to(dtype=torch.float16, device=dino_device)
 
         self.no_split_modules = ["CLIPTextModel", "CLIPVisionModel", "HunyuanDiTTexEncoder", "LlamaForCausalLM"]
 

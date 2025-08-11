@@ -26,7 +26,7 @@ from utils.pipeline_utils import ViewProcessor
 from utils.image_super_utils import imageSuperNet
 from utils.uvwrap_utils import mesh_uv_wrap
 from DifferentiableRenderer.mesh_utils import convert_obj_to_glb
-from accelerate import load_checkpoint_and_dispatch
+from accelerate import dispatch_model, load_checkpoint_in_model
 from accelerate.utils import infer_auto_device_map
 import warnings
 
@@ -87,28 +87,30 @@ class Hunyuan3DPaintPipeline:
 
     def load_models(self):
         torch.cuda.empty_cache()
-        multiview_model = multiviewDiffusionNet(self.config, self.accelerator)
-        device_map = infer_auto_device_map(multiview_model, no_split_module_classes=multiview_model.no_split_modules,
-                                           dtype=torch.float16)
-        self.models["multiview_model"] = load_checkpoint_and_dispatch(
-            multiview_model, 
-            checkpoint=multiview_model.checkpoint_path,
-            no_split_module_classes=multiview_model.no_split_modules,
-            device_map=device_map,
-            dtype=torch.float16
-        )
+        print("Instantiating sharded multiview_model...")
+        self.models["multiview_model"] = multiviewDiffusionNet(self.config)
+
+        # --- super_model (RealESRGAN) ---
+        # --- START OF NEW LOGIC ---
+        # We will place this model on a single, dedicated GPU.
+        # This logic only needs to run on the main process.
+        if self.accelerator.is_main_process:
+            # A good strategy is to use the last available GPU to keep it separate.
+            num_gpus = self.accelerator.num_processes
+            super_model_device = f'cuda:{num_gpus - 1}'
+            
+            print(f"Loading super_model onto dedicated device: {super_model_device}")
+            # Instantiate it, telling it which GPU to use.
+            # The imageSuperNet __init__ will handle loading the model to that device.
+            self.models["super_model"] = imageSuperNet(self.config, device=super_model_device)
+            print("super_model loaded.")
         
-        super_model = imageSuperNet(self.config)
-        device_map = infer_auto_device_map(super_model, no_split_module_classes=super_model.no_split_modules,
-                                         dtype=torch.float16)
-        self.models["super_model"] = load_checkpoint_and_dispatch(
-            super_model,
-            checkpoint=super_model.checkpoint_path,
-            no_split_module_classes=super_model.no_split_modules,
-            dtype=torch.float16,
-            device_map=device_map,
-            force_hooks=True
-        )
+        # All processes wait here to ensure the main process has loaded the super_model
+        # before any process might try to access it (even though only main process will).
+        self.accelerator.wait_for_everyone()
+
+        print("All models loaded and dispatched across available devices.")
+
 
     @torch.no_grad()
     def __call__(self, mesh_path=None, image_path=None, output_mesh_path=None, use_remesh=True, save_glb=True):

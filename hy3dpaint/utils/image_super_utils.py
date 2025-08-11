@@ -14,14 +14,26 @@
 
 import numpy as np
 from PIL import Image
+import torch
 import torch.nn as nn
 
 class imageSuperNet(nn.Module):
-    def __init__(self, config) -> None:
+    def __init__(self, config, device: str) -> None:
         from realesrgan import RealESRGANer
         from basicsr.archs.rrdbnet_arch import RRDBNet
         super().__init__()
+        
+        gpu_id = None
+        if "cuda" in device:
+            try:
+                gpu_id = int(device.split(':')[-1])
+            except (ValueError, IndexError):
+                print(f"Warning: Could not parse GPU ID from device string '{device}'. Defaulting to None.")
+                gpu_id = None
+
         model = RRDBNet(num_in_ch=3, num_out_ch=3, num_feat=64, num_block=23, num_grow_ch=32, scale=4)
+        
+        # Tell RealESRGANer which GPU to use
         upsampler = RealESRGANer(
             scale=4,
             model_path=config.realesrgan_ckpt_path,
@@ -31,12 +43,11 @@ class imageSuperNet(nn.Module):
             tile_pad=10,
             pre_pad=0,
             half=True,
-            gpu_id=None,
+            gpu_id=gpu_id, # Use the parsed GPU ID
         )
         self.upsampler = upsampler
-        self.checkpoint_path = config.realesrgan_ckpt_path
-        self.no_split_modules = ["RRDBNet"]
 
+    @torch.no_grad()
     def forward(self, image):
         output, _ = self.upsampler.enhance(np.array(image))
         output = Image.fromarray(output)
