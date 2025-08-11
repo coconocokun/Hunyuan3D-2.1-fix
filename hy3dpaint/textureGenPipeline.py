@@ -26,7 +26,8 @@ from utils.pipeline_utils import ViewProcessor
 from utils.image_super_utils import imageSuperNet
 from utils.uvwrap_utils import mesh_uv_wrap
 from DifferentiableRenderer.mesh_utils import convert_obj_to_glb
-from accelerate import dispatch_model, load_checkpoint_and_dispatch
+from accelerate import dispatch_model
+from accelerate.utils import infer_auto_device_map
 import warnings
 
 warnings.filterwarnings("ignore")
