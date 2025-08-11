@@ -58,6 +58,8 @@ class multiviewDiffusionNet(nn.Module):
             from hunyuanpaintpbr.unet.modules import Dino_v2
             self.dino_v2 = Dino_v2(config.dino_ckpt_path).to(torch.float16)
             self.dino_v2 = self.dino_v2.to(self.device)
+        
+        self.no_split_modules = ["CLIPTextModel", "CLIPVisionModel", "HunyuanDiTTexEncoder", "LlamaCasualLM"]
 
     def seed_everything(self, seed):
         random.seed(seed)

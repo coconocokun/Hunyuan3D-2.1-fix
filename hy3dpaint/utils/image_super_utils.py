@@ -34,6 +34,7 @@ class imageSuperNet(nn.Module):
             gpu_id=None,
         )
         self.upsampler = upsampler
+        self.no_split_modules = ["RRDBNet"]
 
     def forward(self, image):
         output, _ = self.upsampler.enhance(np.array(image))

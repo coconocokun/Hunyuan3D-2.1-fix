@@ -14,7 +14,6 @@
 
 import os
 import torch
-import torch.nn as nn
 import copy
 import trimesh
 import numpy as np
@@ -27,6 +26,7 @@ from utils.pipeline_utils import ViewProcessor
 from utils.image_super_utils import imageSuperNet
 from utils.uvwrap_utils import mesh_uv_wrap
 from DifferentiableRenderer.mesh_utils import convert_obj_to_glb
+from accelerate import dispatch_model, load_checkpoint_and_dispatch
 import warnings
 
 warnings.filterwarnings("ignore")
@@ -70,9 +70,9 @@ class Hunyuan3DPaintConfig:
 
 
 class Hunyuan3DPaintPipeline:
-
-    def __init__(self, config=None) -> None:
+    def __init__(self, config=None, accelerator=None) -> None:
         self.config = config if config is not None else Hunyuan3DPaintConfig()
+        self.accelerator = accelerator
         self.models = {}
         self.stats_logs = {}
         self.render = MeshRender(
@@ -86,17 +86,16 @@ class Hunyuan3DPaintPipeline:
 
     def load_models(self):
         torch.cuda.empty_cache()
-        # self.models["super_model"] = imageSuperNet(self.config)
-        # self.models["multiview_model"] = multiviewDiffusionNet(self.config)
-        # print("Models Loaded.")
-        if torch.cuda.device_count() > 1:
-            print(f"Using {torch.cuda.device_count()} GPUs for model parallelism.")
-            self.models["super_model"] = nn.DataParallel(imageSuperNet(self.config))
-            self.models["multiview_model"] = nn.DataParallel(multiviewDiffusionNet(self.config))
-        else:
-            print("Using single GPU for model.")
-            self.models["super_model"] = imageSuperNet(self.config)
-            self.models["multiview_model"] = multiviewDiffusionNet(self.config)
+        multiview_model = multiviewDiffusionNet(self.config)
+        device_map = infer_auto_device_map(multiview_model, no_split_module_classes=multiview_model.no_split_module_classes,
+                                           dtype=torch.float16)
+        self.models["multiview_model"] = dispatch_model(multiview_model, device_map=device_map)
+        
+        super_model = imageSuperNet(self.config)
+        device_map = infer_auto_device_map(super_model, no_split_module_classes=super_model.no_split_module_classes,
+                                         dtype=torch.float16)
+        self.models["super_model"] = dispatch_model(super_model, device_map=device_map)
+        
 
     @torch.no_grad()
     def __call__(self, mesh_path=None, image_path=None, output_mesh_path=None, use_remesh=True, save_glb=True):

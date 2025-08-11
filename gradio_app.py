@@ -48,6 +48,15 @@ import numpy as np
 from hy3dshape.utils import logger
 from hy3dpaint.convert_utils import create_glb_with_pbr_materials
 
+import json
+import uuid
+
+
+JOB_DIR = "./job_queue"
+os.makedirs(JOB_DIR, exist_ok=True)
+JOB_FILE = os.path.join(JOB_DIR, "job.json")
+RESULT_FILE = os.path.join(JOB_DIR, "result.json")
+
 
 MAX_SEED = 1e7
 ENV = "Local" # "Huggingface"
@@ -322,7 +331,7 @@ def _gen_shape(
     main_image = image if not MV_MODE else image['front']
     return mesh, main_image, save_folder, stats, seed
 
-@spaces.GPU(duration=60)
+@spaces.GPU(duration=120)
 def generation_all(
     caption=None,
     image=None,
@@ -372,18 +381,49 @@ def generation_all(
     # path = export_mesh(mesh, save_folder, textured=False, type='glb')
     path = export_mesh(mesh, save_folder, textured=False, type='obj') # 这样操作也会 core dump
 
-    logger.info("---Face Reduction takes %s seconds ---" % (time.time() - tmp_time))
-    stats['time']['face reduction'] = time.time() - tmp_time
+    # logger.info("---Face Reduction takes %s seconds ---" % (time.time() - tmp_time))
+    # stats['time']['face reduction'] = time.time() - tmp_time
 
-    tmp_time = time.time()
+    # tmp_time = time.time()
 
-    text_path = os.path.join(save_folder, f'textured_mesh.obj')
-    path_textured = tex_pipeline(mesh_path=path, image_path=image, output_mesh_path=text_path, save_glb=False)
+    # text_path = os.path.join(save_folder, f'textured_mesh.obj')
+    # path_textured = tex_pipeline(mesh_path=path, image_path=image, output_mesh_path=text_path, save_glb=False)
         
-    logger.info("---Texture Generation takes %s seconds ---" % (time.time() - tmp_time))
-    stats['time']['texture generation'] = time.time() - tmp_time
+    # logger.info("---Texture Generation takes %s seconds ---" % (time.time() - tmp_time))
+    # stats['time']['texture generation'] = time.time() - tmp_time
+    input_image_path = os.path.join(save_folder, "texture_input.png")
+    image.save(input_image_path)
+    text_path = os.path.join(save_folder, f'textured_mesh.obj')
+    
+    job_data = {
+        'mesh_path': os.path.abspath(path),
+        'image_path': os.path.abspath(input_image_path),
+        'output_mesh_path': os.path.abspath(text_path)
+    }
+    with open(JOB_FILE, 'w') as f:
+        json.dump(job_data, f)
+    start_poll_time = time.time()
+    path_textured = None
+    while time.time() - start_poll_time < 300: # 5-minute timeout
+        if os.path.exists(RESULT_FILE):
+            with open(RESULT_FILE, 'r') as f:
+                result_data = json.load(f)
+            
+            os.remove(RESULT_FILE) # Clean up
+            
+            if result_data['status'] == 'success':
+                path_textured = result_data['path']
+                print("Texturing job completed successfully.")
+                break
+            else:
+                raise gr.Error(f"Texture generation worker failed: {result_data['message']}")
+        
+        time.sleep(1)
 
-    tmp_time = time.time()
+    if path_textured is None:
+        raise gr.Error("Texture generation timed out.")
+    
+
     # Convert textured OBJ to GLB using obj2gltf with PBR support
     glb_path_textured = os.path.join(save_folder, 'textured_mesh.glb')
     conversion_success = quick_convert_with_obj2gltf(path_textured, glb_path_textured)
@@ -739,7 +779,7 @@ if __name__ == '__main__':
     parser.add_argument("--texgen_model_path", type=str, default='tencent/Hunyuan3D-2.1')
     parser.add_argument('--port', type=int, default=8080)
     parser.add_argument('--host', type=str, default='0.0.0.0')
-    parser.add_argument('--device', type=str, default='cuda:3')
+    parser.add_argument('--device', type=str, default='cuda')
     parser.add_argument('--mc_algo', type=str, default='mc')
     parser.add_argument('--cache-path', type=str, default='./save_dir')
     parser.add_argument('--enable_t23d', action='store_true')
