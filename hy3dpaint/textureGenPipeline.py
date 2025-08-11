@@ -88,12 +88,12 @@ class Hunyuan3DPaintPipeline:
     def load_models(self):
         torch.cuda.empty_cache()
         multiview_model = multiviewDiffusionNet(self.config, self.accelerator)
-        device_map = infer_auto_device_map(multiview_model, no_split_module_classes=multiview_model.no_split_module_classes,
+        device_map = infer_auto_device_map(multiview_model, no_split_module_classes=multiview_model.no_split_modules,
                                            dtype=torch.float16)
         self.models["multiview_model"] = dispatch_model(multiview_model, device_map=device_map)
         
         super_model = imageSuperNet(self.config)
-        device_map = infer_auto_device_map(super_model, no_split_module_classes=super_model.no_split_module_classes,
+        device_map = infer_auto_device_map(super_model, no_split_module_classes=super_model.no_split_modules,
                                          dtype=torch.float16)
         self.models["super_model"] = dispatch_model(super_model, device_map=device_map)
         
